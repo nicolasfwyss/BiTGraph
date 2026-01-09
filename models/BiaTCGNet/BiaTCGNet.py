@@ -87,8 +87,8 @@ class Model(nn.Module):
             self.skip0 = weight_norm(nn.Conv2d(in_channels=in_dim, out_channels=skip_channels, kernel_size=(1, self.receptive_field), bias=True))
             self.skipE = weight_norm(nn.Conv2d(in_channels=residual_channels, out_channels=skip_channels, kernel_size=(1, 1), bias=True))
 
-
-        self.idx = torch.arange(self.num_nodes).cuda()#to(device)
+        self.device = device
+        self.register_buffer("idx", torch.arange(self.num_nodes))
 
 
     def forward(self, input,mask, k, idx=None):#tx,id
