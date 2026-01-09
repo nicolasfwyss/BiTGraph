@@ -191,5 +191,100 @@ def loaddataset(history_len,pred_len,mask_ratio,dataset):
     return train_dataloader, val_dataloader, test_dataloader, scaler
 
 
+def loaddataset_imputegap(ts_object, history_len, pred_len, val_ratio=0.1, test_ratio=0.2):
+    """
+    Adapter to load ImputeGAP TimeSeries object into BiTGraph DataLoaders.
+    
+    Parameters:
+    - ts_object: ImputeGAP TimeSeries object (expects .data attribute with shape (N_nodes, Total_Time_Steps))
+    - history_len: Window size (H)
+    - pred_len: Prediction horizon
+    """
+    
+    # Transform from (N_nodes, Total_Time_Steps) to (Total_Time_Steps, N_nodes)
+    data = np.array(ts_object.data).T
+
+    mask = (~np.isnan(data)).astype(int)
+    
+    data[np.isnan(data)] = 0.0  
+    
+    # Reshape To (Total_Time_Steps, N_nodes, 1)
+    data = data[:, :, None].astype('float32')
+    mask = mask[:, :, None].astype('int32')
+    
+    x, y, mask,mask_target = Add_Window_Horizon(data, mask, history_len, pred_len)
+    
+    train_x,train_y,masks_tra,masks_target_tra,val_x,val_y,masks_val,masks_target_val,test_x,test_y,masks_test,masks_target_test = split_data_by_ratio(
+        x,y, mask,mask_target, val_ratio=val_ratio, test_ratio=test_ratio
+    )
+
+    scaler = StandardScaler(mean=train_x.mean(), std=train_x.std())
+    x_tra = scaler.transform(train_x)
+    y_tra = scaler.transform(train_y)
+    x_val = scaler.transform(val_x)
+    y_val = scaler.transform(val_y)
+    x_test = scaler.transform(test_x)
+    y_test = scaler.transform(test_y)
+
+    train_dataset = TSDataset(x_tra, y_tra,masks_tra,masks_target_tra)
+    val_dataset = TSDataset(x_val, y_val,masks_val,masks_target_val)
+    test_dataset = TSDataset(x_test, y_test,masks_test,masks_target_test)
+    train_dataloader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=8,
+                                  drop_last=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=8, drop_last=True)
+    test_dataloader = DataLoader(test_dataset,batch_size=32, shuffle=False, num_workers=8, drop_last=False)
+    
+    scaler = StandardScaler(mean=train_x.mean(), std=train_x.std())
+    x_tra = scaler.transform(train_x)
+    y_tra = scaler.transform(train_y)
+    x_val = scaler.transform(val_x)
+    y_val = scaler.transform(val_y)
+    x_test = scaler.transform(test_x)
+    y_test = scaler.transform(test_y)
+
+    train_dataset = TSDataset(x_tra, y_tra,masks_tra,masks_target_tra)
+    val_dataset = TSDataset(x_val, y_val,masks_val,masks_target_val)
+    test_dataset = TSDataset(x_test, y_test,masks_test,masks_target_test)
+    train_dataloader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=8,
+                                  drop_last=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=8, drop_last=True)
+    test_dataloader = DataLoader(test_dataset,batch_size=32, shuffle=False, num_workers=8, drop_last=False)
+
+
+    return train_dataloader, val_dataloader, test_dataloader, scaler
+    
+def reconstruct_from_bitgraph_output(model_output, scaler):
+    """
+    Inverse Transformation (BiTGraph -> ImputeGAP)
+    Aggregates windowed predictions back to (N_nodes, Time_Steps)
+    
+    Parameters:
+    - model_output: list of torch tensors or single tensor of shape (Batch, Horizon, N_nodes, Channels)
+    - scaler: The StandardScaler instance used during loading
+    """
+    
+    if isinstance(model_output, list):
+        model_output = torch.cat(model_output, dim=0)
+    
+    preds = model_output.detach().cpu().numpy()
+    
+    preds = scaler.inverse_transform(preds)
+    
+
+    num_windows, horizon, N_nodes, channels = preds.shape
+    total_time_steps = num_windows + horizon - 1
+    
+    reconstructed = np.zeros((total_time_steps, N_nodes))
+    counts = np.zeros((total_time_steps, N_nodes))
+    
+    for i in range(num_windows):
+        reconstructed[i:i+horizon, :] += preds[i, :, :, 0]
+        counts[i:i+horizon, :] += 1
+        
+    reconstructed /= counts
+    
+    reconstructed = reconstructed.T
+    return reconstructed
+
 if __name__ == '__main__':
     print('')
